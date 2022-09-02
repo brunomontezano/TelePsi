@@ -1,0 +1,152 @@
+---
+title: "Análise Exploratória"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Análise Exploratória}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = FALSE,
+  warning = FALSE,
+  message = FALSE,
+  echo = FALSE,
+  eval = TRUE,
+  comment = "#>",
+  fig.width=16,
+  fig.height=9
+)
+```
+
+```{r importacao}
+data(dados, package = "TelePsi")
+```
+
+## Depressão
+
+Como medida de sintomas depressivos, utilizou-se o domínio de
+depressão do instrumento
+*Patient-Reported Outcomes Measurement Information System*
+(PROMIS). Nesta primeira etapa, podemos almejar explorar
+brevemente como os escores do instrumento se distribuem na
+linha de base (*baseline*) e no acompanhamento após 1 mês da
+intervenção.
+
+Com este objetivo, gerou-se um histograma da distribuição dos
+escores em cada um dos tempos:
+
+```{r hist-depressao}
+dados |> 
+    TelePsi::plotar_hist_promis("dep")
+```
+
+*Violin plots* e *boxplots* também foram gerados para verificar
+de forma mais direta a diferença entre os escores de depressão
+antes e depois:
+
+```{r violin-depressao}
+dados |> 
+    TelePsi::plotar_violin_promis("dep")
+```
+
+## Ansiedade
+
+Os níveis de ansiedade também foram avaliados a partir do
+PROMIS e os mesmos plots podem ser visualizados abaixo:
+
+```{r plots-ansiedade}
+dados |> 
+    TelePsi::plotar_hist_promis("anx")
+
+dados |> 
+    TelePsi::plotar_violin_promis("anx")
+```
+
+## Irritabilidade
+
+Abaixo seguem os plots para o domínio de irritabilidade:
+
+```{r plots-irritabilidade}
+dados |> 
+    TelePsi::plotar_hist_promis("irr")
+
+dados |> 
+    TelePsi::plotar_violin_promis("irr")
+```
+
+## Satisfação com a vida
+
+Abaixo seguem os plots para o domínio de satisfação com a vida:
+
+```{r plots-satisfacao}
+dados |> 
+    TelePsi::plotar_hist_promis("sat")
+
+dados |> 
+    TelePsi::plotar_violin_promis("sat")
+```
+
+## Diferença nos sintomas ansiosos no pré e pós tratamento
+
+Para calcular a mudança ao longo do tempo, calculou-se o
+$\Delta_i$ que se dá pela seguinte equação: $pre_i - pos_i$,
+sendo $pre_i$ o escore da observação $i$ no domínio de ansiedade
+da PROMIS no *baseline* e $pos_i$, no pós-tratamento (1 mês).
+
+Abaixo, segue um *scatterplot* com os grupos de $\Delta$
+estratificados.
+
+```{r scatter-delta-ansiedade}
+dados |> 
+    dplyr::filter(!is.na(g_promis_anx)) |> 
+    dplyr::mutate(
+        delta_anx = b_promis_anx - g_promis_anx,
+        delta_bin_anx = dplyr::if_else(delta_anx > 0,
+                                       "Delta positivo",
+                                       dplyr::if_else(
+                                           delta_anx == 0,
+                                           "Delta igual a zero",
+                                           "Delta negativo"))
+    ) |> 
+    ggplot2::ggplot(ggplot2::aes(x = b_promis_anx,
+                                 y = g_promis_anx,
+                                 color = delta_bin_anx)) +
+    ggplot2::geom_jitter(size = 2) +
+    ggplot2::geom_smooth(method = "lm") +
+    ggplot2::theme_minimal(24) +
+    ggplot2::labs(x = "Baseline",
+                  y = "Pós-tratamento") +
+    ggplot2::theme(legend.title = ggplot2::element_blank(),
+                   legend.position = "top")
+```
+
+Como pode-se visualizar, a maioria da amostra apresentou uma
+resposta aparentemente positiva, baseando-se na mudança de escore
+de um tempo para o outro do estudo.
+
+```{r}
+dados |> 
+    dplyr::filter(!is.na(g_promis_anx)) |> 
+    dplyr::mutate(
+        delta_anx = b_promis_anx - g_promis_anx,
+        delta_bin_anx = dplyr::if_else(delta_anx > 0,
+                                       "Delta positivo",
+                                       dplyr::if_else(
+                                           delta_anx == 0,
+                                           "Delta igual a zero",
+                                           "Delta negativo"))
+    ) |> 
+    dplyr::count(delta_bin_anx) |> 
+    dplyr::mutate(`Frequência relativa` = (n/sum(n) * 100) |> 
+                      format(digits = 2, nsmall = 2) |> 
+                      as.character() |> 
+                      stringr::str_c("%")) |> 
+    dplyr::rename(Delta = delta_bin_anx,
+                  `Frequência absoluta` = n) |> 
+    knitr::kable(caption = "Frequência de sujeitos em cada
+                 um dos grupos de Delta.")
+```
+
+
