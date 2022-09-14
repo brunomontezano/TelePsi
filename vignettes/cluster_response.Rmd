@@ -1,0 +1,149 @@
+---
+title: "Agrupamento de resposta de tratamento"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Agrupamento de resposta de tratamento}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = FALSE,
+  warning = FALSE,
+  message = FALSE,
+  echo = FALSE,
+  eval = TRUE,
+  comment = "#>",
+  fig.width=16,
+  fig.height=9
+)
+```
+
+```{r importacao}
+data(dados, package = "TelePsi")
+```
+
+## Cálculo dos deltas
+
+Após a importação dos dados processados por meio do presente pacote, os deltas
+($\Delta$) de cada um dos desfechos da PROMIS é calculado através da seguinte
+fórmula: $\Delta_i = pre_i - pos_i$, em que o significado de cada elemento está
+explicitado no *vignette* da [análise exploratória de dados](eda.html).
+
+Após a criação destes deltas, novas colunas na base de dados foram criadas,
+como pode ser visualizado na tabela de exemplo abaixo:
+
+```{r calcular-deltas}
+dados_com_delta <- dados |> 
+    dplyr::filter(!is.na(g_promis_anx)) |> 
+    dplyr::mutate(
+        delta_anx = b_promis_anx - g_promis_anx,
+        delta_dep = b_promis_dep - g_promis_dep,
+        delta_irr = b_promis_irr - g_promis_irr,
+        delta_sat = b_promis_sat - g_promis_sat
+    )
+    
+dados_com_delta |> 
+    dplyr::select(dplyr::matches("^delta.*$")) |> 
+    utils::head() |> 
+    gt::gt() |> 
+    gt::tab_header(
+        title = "Exemplo com as seis observações após cálculo dos deltas para
+        os desfechos da PROMIS"
+    )
+```
+
+## Agrupamento da resposta de tratamento
+
+Para as análises de agrupamento (*clustering*) em geral, a ideia é criar uma
+partição da nossa amostra $C_1, \dots, C_k$, tal que:
+
+- $C_1{\cup}C_2\dots{\cup}C_k = \{1, 2, \dots, n\}$, ou seja, deseja-se definir
+$k$ subconjuntos que a união dos mesmos seja igual a totalidade da amostra. Em
+outras palavras, toda observação estará contida em necessariamente um
+subconjunto/agrupamento;
+
+- $C_i{\cap}C_j = {\emptyset}, {\forall} i \neq j$, ou seja, a intersecção entre
+os subconjuntos é vazia, logo, cada observação pode fazer parte de apenas um
+subconjunto.
+
+O algoritmo utilizado nesta etapa foi o *K*-médias. Este algoritmo supõe a
+distância Euclidiana como medida de dissimilaridade. Visa buscar o melhor
+agrupamento, ou seja, busca a partição dos dados que minimize:
+
+$\sum\limits_{k = 1}^K\frac{1}{|C_k|}\sum\limits_{ij{\in}C_k}d^2(x_i, x_j)$
+
+Quer dizer que nós somamos para todos os *clusters* esta quantidade determinada
+pela fórmula, que é a soma das distâncias 2 a 2 de todos sujeitos pertencentes
+a um determinado *cluster*.
+
+Após realizar o agrupamento a partir do algoritmo explicado acima com o número
+de *clusters* $k$ = 2, obteve-se grupos com os seguintes centróides[^1]:
+
+[^1]: Centro do grupo/subconjunto. É a média aritmética de todos os pontos
+(observações pertencentes ao *cluster*).
+
+```{r cluster}
+set.seed(123)
+
+modelo_kmeans <- tidyclust::k_means(num_clusters = 2) |> 
+    tidyclust::set_engine("stats")
+
+fit_kmeans <- modelo_kmeans |> 
+    tidyclust::fit(~ delta_anx + delta_dep + delta_irr + delta_sat,
+                   data = dados_com_delta)
+
+fit_kmeans |> 
+    tidyclust::extract_centroids() |> 
+    dplyr::mutate(
+        .cluster = dplyr::case_when(
+            .cluster == "Cluster_1" ~ "Respondentes piores",
+            .cluster == "Cluster_2" ~ "Respondentes melhores"
+        )
+    ) |> 
+    dplyr::mutate(
+        dplyr::across(
+            dplyr::starts_with("delta"),
+            \(x) format(x, digits = 2)
+        )
+    ) |> 
+    dplyr::rename(
+        Cluster = .cluster,
+        Ansiedade = delta_anx,
+        Depressão = delta_dep,
+        Irritabilidade = delta_irr,
+        `Satisfação com a vida` = delta_sat
+    ) |> 
+    gt::gt() |> 
+    gt::tab_spanner(
+        label = gt::html("&Delta; médio"),
+        columns = c(Ansiedade, Depressão, Irritabilidade, `Satisfação com a vida`)
+    ) |> 
+    gt::tab_header(
+        title = gt::html("Dois agrupamentos baseados nos deltas (&Delta;) de todos desfechos avaliados pela PROMIS"),
+        subtitle = gt::html("Elaborado com algoritmo de <i>k-means</i> para o
+                            agrupamento das observações")
+    )
+
+dados_com_cluster <- fit_kmeans |> 
+    tidyclust::extract_cluster_assignment() |> 
+    dplyr::mutate(
+        .cluster = dplyr::case_when(
+            .cluster == "Cluster_1" ~ "Ruim",
+            .cluster == "Cluster_2" ~ "Bom"
+        )
+    ) |> 
+    dplyr::bind_cols(dados_com_delta)
+```
+
+No grupo de piores respondentes, observou-se uma soma do erro quadrático de
+`r fit_kmeans |> tidyclust::within_cluster_sse() |> dplyr::filter(.cluster == "Cluster_1") |> dplyr::pull(n_members)`,
+e no grupo de melhores respondentes, a medida ficou em 
+`r fit_kmeans |> tidyclust::within_cluster_sse() |> dplyr::filter(.cluster == "Cluster_2") |> dplyr::pull(n_members)`. Esta medida de erro mede a soma de
+todas distâncias das observações ao centro de seus *clusters* (centróides).
+Logo, poderíamos interpretar estas medidas de soma do erro quadrático por
+*clusters* de forma que o grupo dos bons respondentes é ligeiramente mais
+homogêneo do que o grupo de piores respondentes.
+
+
