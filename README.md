@@ -29,4 +29,4 @@ remotes::install_github("brunomontezano/TelePsi")
 ## Contato
 
 Para contatar o responsável pelas análises apresentadas neste
-repositório em específicado, enviar email para <bmontezano@hcpa.edu.br>
+repositório em específico, enviar email para <bmontezano@hcpa.edu.br>
