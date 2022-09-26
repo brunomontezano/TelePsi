@@ -1,0 +1,226 @@
+---
+title: "Predizer resposta subjetiva ao tratamento"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Predizer resposta subjetiva ao tratamento}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = FALSE,
+  warning = FALSE,
+  message = FALSE,
+  echo = TRUE,
+  eval = TRUE,
+  comment = "#>",
+  fig.width=16,
+  fig.height=9
+)
+```
+
+```{r importacao}
+data(dados, package = "TelePsi")
+```
+
+## Qual foi a percepção dos sujeitos em relação a resposta de tratamento? 
+
+```{r plot-resposta}
+dados_com_resposta <- dados |> 
+    dplyr::mutate(
+        resposta = as.factor(
+            dplyr::case_when(
+                g_perc %in% c("1 Muito pior", "2 Moderadamente pior",
+                              "3 Levemente pior", "4 Igual") ~ "Igual ou pior",
+                g_perc %in% c("5 Levemente melhor", "6 Moderadamente melhor",
+                              "7 Muito melhor") ~ "Melhor",
+                TRUE ~ NA_character_
+            )
+        )
+    ) |> 
+    dplyr::filter(!is.na(resposta),
+                  suicidio == "Sem risco")
+    
+dados_com_resposta |> 
+    dplyr::count(resposta) |> 
+    ggplot2::ggplot(ggplot2::aes(y = n, x = resposta)) +
+    ggplot2::geom_col(fill = "orange") +
+    ggplot2::geom_text(ggplot2::aes(label = n), vjust = -0.5, size = 7) +
+    ggplot2::theme_minimal(base_size = 22) +
+    ggplot2::labs(x = "Resposta ao tratamento",
+                  y = "# de participantes")
+```
+
+## Limpeza e manipulação de dados
+
+```{r processamento}
+dados_incluidos <- dados_com_resposta |> 
+    dplyr::select(resposta,
+                  idade,
+                  sexo,
+                  prof_saude = essenciais,
+                  g_vid,
+                  dplyr::matches("^b_d[1-8]$"),
+                  dplyr::matches("^b_a[1-8]$"),
+                  dplyr::matches("^b_i[1-5]$"),
+                  dplyr::matches("^b_cov9[a-z][a-b]*$"),
+                  dplyr::matches("^b_son[1-8]$"),
+                  dplyr::matches("^b_cov6[a-d]$"),
+                  b_trat1,
+                  b_med1,
+                  b_psic1,
+                  g_faltas
+                  ) |> 
+    dplyr::mutate(
+        sexo = as.factor(
+            dplyr::case_when(
+                sexo == "1 Feminino" ~ "Feminino",
+                sexo == "2 Masculino" ~ "Masculino",
+                TRUE ~ NA_character_
+            )
+        ),
+        prof_saude = as.factor(
+            dplyr::case_when(
+                prof_saude == "1 Profissional da Saúde" ~ "Sim",
+                prof_saude %in% c(
+                    "2 Outro Profissional de Serviços Essenciais",
+                    "3 Professor(a)",
+                    "4 Outra categoria profissional"
+                ) ~ "Não",
+                TRUE ~ NA_character_
+            )
+        ), 
+        g_vid = readr::parse_number(g_vid),
+        g_vid = dplyr::if_else(g_vid > 16, NA_real_, g_vid)
+    )
+```
+
+## Manipulação de fatores
+
+```{r limpeza}
+dados_limpos <- dados_incluidos |>
+    dplyr::mutate(
+        dplyr::across(dplyr::matches("^b_cov9[a-z][a-b]*$"),
+                      \(x) as.factor(
+                          dplyr::case_when(
+                              x == 1 ~ "Sim",
+                              x == 0 ~ "Não",
+                              TRUE ~ NA_character_
+                          )
+                      )),
+        dplyr::across(c(b_trat1, b_med1, b_psic1),
+                      \(x) as.factor(
+                          dplyr::case_when(
+                              x == "1 Sim" ~ "Sim",
+                              x == "2 Não" ~ "Não",
+                              TRUE ~ NA_character_
+                          )
+                      )),
+        resposta = relevel(resposta, ref = "Igual ou pior")
+    ) |> 
+    dplyr::glimpse()
+```
+
+## Análises bivariadas
+
+```{r analise_bivariada}
+library(magrittr, include.only = "%>%")
+
+num_biv <- dados_limpos |>
+    dplyr::select(resposta, where(is.numeric)) |>
+    tidyr::pivot_longer(names_to = "variable", values_to = "value", -resposta) |>
+    dplyr::group_by(variable) %>%
+    dplyr::do(t.test(.$value ~ .$resposta) |>
+                  broom::tidy()) |> 
+    dplyr::ungroup() |> 
+    dplyr::select(-method, -alternative)
+
+num_biv |> 
+    knitr::kable(
+        digits = 3
+    )
+
+
+cat_biv <- dados_limpos |>
+    purrr::keep(is.factor) |>
+    tidyr::pivot_longer(names_to = "variable", values_to = "value", -resposta) |>
+    dplyr::group_by(variable) %>%
+    dplyr::do(chisq.test(.$resposta, .$value, simulate.p.value = TRUE) |>
+                  broom::tidy()) |> 
+    dplyr::select(-c(parameter, method)) |> 
+    dplyr::ungroup()
+
+knitr::kable(cat_biv,
+             digits = 3,
+             col.names = c("Variável",
+                           "Estatística",
+                           "p-valor"))
+```
+
+
+```{r modelagem}
+set.seed(123)
+receita <- recipes::recipe(resposta ~ b_cov9l + b_cov9p + b_cov9v +
+                               b_a7 + b_a8 + b_d1 + b_d2 + b_d3 + b_d5 +
+                               b_d6 + b_d8 + b_i2 + b_i4 + b_son8 + g_vid,
+                           data = dados_limpos) |> 
+    recipes::step_filter_missing(threshold = 0.1) |> 
+    recipes::step_nzv(recipes::all_predictors()) |> 
+    recipes::step_corr(recipes::all_numeric_predictors(), threshold = 0.9) |> 
+    recipes::step_impute_median(recipes::all_numeric_predictors()) |> 
+    recipes::step_impute_mode(recipes::all_nominal_predictors()) |> 
+    recipes::step_dummy(recipes::all_nominal_predictors())
+
+dados_processados <- receita |> 
+    recipes::prep() |> 
+    recipes::bake(new_data = NULL)
+
+dados_processados
+
+modelo <- parsnip::logistic_reg() |> 
+    parsnip::set_mode("classification") |> 
+    parsnip::set_engine("glm")
+
+wf <- workflows::workflow() |> 
+    workflows::add_model(modelo) |> 
+    workflows::add_recipe(receita)
+
+modelo_ajustado <- wf |> 
+    parsnip::fit(data = dados_limpos) |> 
+    hardhat::extract_fit_engine()
+
+set.seed(123)
+intervalos <- modelo_ajustado |> 
+    confint.default(level = 0.95) |> 
+    exp() |> 
+    tibble::as_tibble(rownames = "term") |> 
+    purrr::set_names(c("term", "upper", "lower"))
+
+modelo_ajustado |>
+    broom::tidy() |>
+    dplyr::filter(p.value < 0.05 & term != "(Intercept)") |>
+    dplyr::mutate(or = exp(estimate)) |>
+    dplyr::left_join(intervalos, by = "term") |>
+    ggplot2::ggplot() +
+    ggplot2::aes(x = or, y = term) +
+    ggplot2::geom_point(size = 5, color = "darkorange") +
+    ggplot2::geom_linerange(ggplot2::aes(xmin = lower, xmax = upper),
+                            color = "darkorange",
+                            size = 0.8) +
+    ggplot2::geom_vline(xintercept = 1) +
+    ggplot2::scale_y_discrete(
+        labels = c("Auto-medicação",
+    #               "Nada pode animar",
+    #               "Rabugento",
+    #               "Toma alguma medicação",
+    #               "Satisfação com sono",
+    #               "Tratamento",
+                   "Quantidade de vídeos")
+    ) +
+    ggplot2::labs(y = "Variável independente", x = "Odds ratio") +
+    ggplot2::theme_minimal(base_size = 20)
+```
+
+
+

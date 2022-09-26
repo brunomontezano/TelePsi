@@ -10,10 +10,15 @@ Authors@R: c(
     "alache@hcpa.edu.br",
     role = c("aut"),
     comment = c(ORCID = "0000-0003-2403-2050")),
+    person("Lucas", "Spanemberg", ,
+    "lucas.spanemberg@pucrs.br",
+    role = c("aut"),
+    comment = c(ORCID = "0000-0001-6789-7420")),
     person("Marcelo Pio", "Fleck", ,
     "mfleck@hcpa.edu.br",
     role = c("ths", "aut"),
-    comment = c(ORCID = "0000-0003-3203-7951")))
+    comment = c(ORCID = "0000-0003-3203-7951"))
+    )
 Description: O pacote embarca as análises do projeto TelePsi quanto à desfechos de resposta de tratamento.
 License: GPL (>= 3)
 Encoding: UTF-8
