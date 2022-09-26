@@ -1,8 +1,8 @@
 ---
-title: "Predizer resposta subjetiva ao tratamento"
+title: "Análise multivariada da resposta subjetiva ao tratamento"
 output: rmarkdown::html_vignette
 vignette: >
-  %\VignetteIndexEntry{Predizer resposta subjetiva ao tratamento}
+  %\VignetteIndexEntry{Análise multivariada da resposta subjetiva ao tratamento}
   %\VignetteEngine{knitr::rmarkdown}
   %\VignetteEncoding{UTF-8}
 ---
