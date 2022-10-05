@@ -158,6 +158,161 @@ knitr::kable(cat_biv,
                            "p-valor"))
 ```
 
+```{r}
+dados_prontos <- dados_limpos |> 
+    dplyr::mutate(
+        dplyr::across(dplyr::matches("^b_[d\\|a\\|i][1-8]$"),
+                      \(x) as.factor(dplyr::case_when(
+                          x %in% 4:5 ~ "Sim",
+                          x %in% 1:3 ~ "Não",
+                          TRUE ~ NA_character_
+                      ))),
+        b_son1 = as.factor(dplyr::case_when(
+            b_son1 %in% 3:5 ~ "Bom",
+            b_son1 %in% 1:2 ~ "Ruim",
+            TRUE ~ NA_character_
+        )),
+        dplyr::across(dplyr::matches("^b_son[2-8]$"),
+                      \(x) as.factor(
+                          dplyr::case_when(
+                              x %in% 4:5 ~ "Sim",
+                              x %in% 1:3 ~ "Não",
+                              TRUE ~ NA_character_
+                          )
+                      )),
+        dplyr::across(dplyr::matches("^b_cov6[a-d]"),
+                      \(x) as.factor(
+                          dplyr::case_when(
+                              x %in% 0:1 ~ "Não",
+                              x %in% 2:4 ~ "Sim",
+                              TRUE ~ NA_character_
+                          )
+                      ))
+    )
+```
+
+
+```{r}
+
+set.seed(123)
+validacao <- rsample::vfold_cv(dados_prontos,
+                               v = 10,
+                               repeats = 10,
+                               strata = "resposta")
+
+set.seed(123)
+receita <- recipes::recipe(resposta ~ .,
+                           data = dados_prontos) |> 
+    recipes::step_filter_missing(threshold = 0.1) |> 
+    recipes::step_nzv(recipes::all_predictors()) |> 
+    recipes::step_corr(recipes::all_numeric_predictors(), threshold = 0.9) |> 
+    recipes::step_impute_median(recipes::all_numeric_predictors()) |> 
+    recipes::step_impute_mode(recipes::all_nominal_predictors()) |> 
+    recipes::step_normalize(recipes::all_numeric_predictors()) |> 
+    recipes::step_dummy(recipes::all_nominal_predictors())
+
+set.seed(123)
+modelo <- parsnip::logistic_reg(mixture = 1, penalty = tune::tune()) |> 
+    parsnip::set_mode("classification") |> 
+    parsnip::set_engine("glmnet")
+
+wf <- workflows::workflow() |> 
+    workflows::add_model(modelo) |> 
+    workflows::add_recipe(receita)
+
+tunagem <- dials::grid_regular(
+    dials::penalty(range = c(-3, 3)),
+    levels = 100
+)
+
+set.seed(123)
+rs <- tune::tune_grid(
+    object = wf,
+    resamples = validacao,
+    grid = tunagem,
+    metrics = yardstick::metric_set(
+        yardstick::roc_auc,
+        yardstick::bal_accuracy,
+        yardstick::ppv,
+        yardstick::sensitivity,
+        yardstick::specificity
+    ),
+    control = tune::control_grid(
+        verbose = TRUE,
+        allow_par = TRUE
+    )
+)
+
+rs |> 
+    ggplot2::autoplot()
+
+rs |> 
+    tune::show_best(metric = "roc_auc")
+
+best_param <- rs |> 
+    tune::select_best(metric = "roc_auc")
+
+ultimo_ajuste <- wf |>
+    tune::finalize_workflow(best_param) |>
+    parsnip::fit(data = dados_prontos)
+
+modelo_ajustado <- ultimo_ajuste |> 
+    hardhat::extract_fit_engine()
+
+table_sig <- coef(modelo_ajustado, s = best_param$penalty) |> 
+    as.matrix() |> 
+    tibble::as_tibble(rownames = "term") |> 
+    dplyr::filter(s1 != 0) |> 
+    dplyr::mutate(
+        sig = dplyr::if_else(s1 > 0, "Protective factor", "Risk factor")
+    )
+
+caret::varImp(modelo_ajustado, lambda = best_param$penalty)
+
+broom::tidy(modelo_ajustado) |> 
+    dplyr::filter(lambda == best_param$penalty)
+
+table_sig
+
+vip::vi(modelo_ajustado, lambda = best_param$penalty, geom = "point") |> 
+    dplyr::filter(Importance != 0) |> 
+    dplyr::mutate(
+        Sign = dplyr::if_else(Sign == "NEG", "Fator de risco",
+                              "Fator protetivo"),
+        Variable = as.factor(Variable),
+        Variable = forcats::fct_reorder(Variable, Importance)
+    ) |> 
+    ggplot2::ggplot(ggplot2::aes(
+        x = Importance,
+        y = Variable,
+        fill = Sign
+    )) +
+    ggplot2::geom_col() +
+    ggplot2::scale_fill_manual(values = c("#e63946", "#a8dadc")) +
+    #ggplot2::scale_y_discrete(
+    #    labels = c(
+    #        "Tomando alguma medicação",
+    #        "Fazendo atividades artísticas",
+    #        "Sem valor e sem importância",
+    #        "Satisfeito com o meu sono",
+    #        "Comendo muitos carboidratos ou gorduras",
+    #        "Auto-medicação",
+    #        "Deprimido",
+    #        "Quantidade de vídeos"
+    #    )
+    #) +
+    ggplot2::labs(
+        x = "Importância",
+        y = "Variável"
+    ) +
+    ggplot2::theme_minimal(base_size = 20) +
+    ggplot2::theme(legend.title = ggplot2::element_blank())
+
+ultimo_ajuste |> 
+    tune::collect_metrics()
+```
+
+
 
 ```{r modelagem}
 set.seed(123)
