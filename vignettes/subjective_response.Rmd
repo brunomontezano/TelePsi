@@ -1,5 +1,5 @@
 ---
-title: "Análise multivariada da resposta subjetiva ao tratamento"
+title: "Predição da resposta subjetiva ao tratamento"
 output: rmarkdown::html_vignette
 vignette: >
   %\VignetteIndexEntry{Análise multivariada da resposta subjetiva ao tratamento}
@@ -12,7 +12,7 @@ knitr::opts_chunk$set(
   collapse = FALSE,
   warning = FALSE,
   message = FALSE,
-  echo = TRUE,
+  echo = FALSE,
   eval = TRUE,
   comment = "#>",
   fig.width=16,
@@ -122,44 +122,9 @@ dados_limpos <- dados_incluidos |>
     dplyr::glimpse()
 ```
 
-## Análises bivariadas
 
-```{r analise_bivariada}
-library(magrittr, include.only = "%>%")
-
-num_biv <- dados_limpos |>
-    dplyr::select(resposta, where(is.numeric)) |>
-    tidyr::pivot_longer(names_to = "variable", values_to = "value", -resposta) |>
-    dplyr::group_by(variable) %>%
-    dplyr::do(t.test(.$value ~ .$resposta) |>
-                  broom::tidy()) |> 
-    dplyr::ungroup() |> 
-    dplyr::select(-method, -alternative)
-
-num_biv |> 
-    knitr::kable(
-        digits = 3
-    )
-
-
-cat_biv <- dados_limpos |>
-    purrr::keep(is.factor) |>
-    tidyr::pivot_longer(names_to = "variable", values_to = "value", -resposta) |>
-    dplyr::group_by(variable) %>%
-    dplyr::do(chisq.test(.$resposta, .$value, simulate.p.value = TRUE) |>
-                  broom::tidy()) |> 
-    dplyr::select(-c(parameter, method)) |> 
-    dplyr::ungroup()
-
-knitr::kable(cat_biv,
-             digits = 3,
-             col.names = c("Variável",
-                           "Estatística",
-                           "p-valor"))
-```
-
-```{r}
-dados_prontos <- dados_limpos |> 
+```{r dicotomizacao}
+dados_dicotomizados <- dados_limpos |> 
     dplyr::mutate(
         dplyr::across(dplyr::matches("^b_[d\\|a\\|i][1-8]$"),
                       \(x) as.factor(dplyr::case_when(
@@ -188,54 +153,58 @@ dados_prontos <- dados_limpos |>
                               TRUE ~ NA_character_
                           )
                       ))
-    )
+    ) |> 
+    dplyr::glimpse()
 ```
 
 
 ```{r}
+set.seed(123)
+divisao <- rsample::initial_split(dados_limpos,
+                                  prop = 0.75,
+                                  strata = "resposta")
+
+treino <- rsample::training(divisao)
+teste <- rsample::testing(divisao)
 
 set.seed(123)
-validacao <- rsample::vfold_cv(dados_prontos,
-                               v = 10,
+validacao <- rsample::vfold_cv(treino,
+                               v = 5,
                                repeats = 10,
                                strata = "resposta")
 
 set.seed(123)
 receita <- recipes::recipe(resposta ~ .,
-                           data = dados_prontos) |> 
+                           data = treino) |> 
     recipes::step_filter_missing(threshold = 0.1) |> 
     recipes::step_nzv(recipes::all_predictors()) |> 
     recipes::step_corr(recipes::all_numeric_predictors(), threshold = 0.9) |> 
     recipes::step_impute_median(recipes::all_numeric_predictors()) |> 
     recipes::step_impute_mode(recipes::all_nominal_predictors()) |> 
-    recipes::step_normalize(recipes::all_numeric_predictors()) |> 
-    recipes::step_dummy(recipes::all_nominal_predictors())
+    themis::step_rose(resposta, seed = 123)
+    #recipes::step_normalize(recipes::all_numeric_predictors()) |> 
+    #recipes::step_dummy(recipes::all_nominal_predictors())
 
 set.seed(123)
-modelo <- parsnip::logistic_reg(mixture = 1, penalty = tune::tune()) |> 
+modelo <- parsnip::rand_forest(trees = tune::tune(),
+                               min_n = tune::tune(),
+                               mtry = tune::tune()
+                               ) |> 
     parsnip::set_mode("classification") |> 
-    parsnip::set_engine("glmnet")
+    parsnip::set_engine("ranger", importance = "impurity")
 
 wf <- workflows::workflow() |> 
     workflows::add_model(modelo) |> 
     workflows::add_recipe(receita)
 
-tunagem <- dials::grid_regular(
-    dials::penalty(range = c(-3, 3)),
-    levels = 100
-)
-
 set.seed(123)
 rs <- tune::tune_grid(
     object = wf,
     resamples = validacao,
-    grid = tunagem,
+    grid = 10,
     metrics = yardstick::metric_set(
         yardstick::roc_auc,
-        yardstick::bal_accuracy,
-        yardstick::ppv,
-        yardstick::sensitivity,
-        yardstick::specificity
+        yardstick::f_meas,
     ),
     control = tune::control_grid(
         verbose = TRUE,
@@ -254,7 +223,10 @@ best_param <- rs |>
 
 ultimo_ajuste <- wf |>
     tune::finalize_workflow(best_param) |>
-    parsnip::fit(data = dados_prontos)
+    tune::last_fit(divisao)
+
+ultimo_ajuste |> 
+    tune::collect_metrics()
 
 modelo_ajustado <- ultimo_ajuste |> 
     hardhat::extract_fit_engine()
@@ -267,7 +239,7 @@ table_sig <- coef(modelo_ajustado, s = best_param$penalty) |>
         sig = dplyr::if_else(s1 > 0, "Protective factor", "Risk factor")
     )
 
-caret::varImp(modelo_ajustado, lambda = best_param$penalty)
+caret::varImp(modelo_ajustado)
 
 broom::tidy(modelo_ajustado) |> 
     dplyr::filter(lambda == best_param$penalty)
