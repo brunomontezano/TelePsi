@@ -217,7 +217,18 @@ or_table |>
 or_table |> 
     dplyr::filter(variavel != "(Intercept)" & pvalue < 0.05) |> 
     ggplot2::ggplot() +
-    ggplot2::aes(x = or, y = variavel) +
+    ggplot2::aes(
+        x = or,
+        y = variavel,
+        label = paste0(
+            as.character(format(or, digits = 2)),
+            " (",
+            as.character(format(lower_int, digits = 2)),
+            "-",
+            as.character(format(upper_int, digits = 2)),
+            ")"
+        )
+    )+
     ggplot2::geom_point(size = 3.5, color = "maroon4") +
     ggplot2::geom_linerange(
         ggplot2::aes(xmin = lower_int, xmax = upper_int),
@@ -228,13 +239,18 @@ or_table |>
     ggplot2::scale_y_discrete(labels = c("Comendo muitos carboidratos\nou gorduras",
                                          "Usando medicações\nsem prescrição",
                                          "Quantidade de vídeos")) +
-    ggplot2::labs(x = expression(paste("Razão de chances (", italic("odds ratio"), ")")),
-                  y = "Variável") +
+    ggplot2::labs(x = expression(paste(
+        "Razão de chances (", italic("odds ratio"), ")"
+    )),
+    y = "Variável") +
+    ggplot2::geom_text(size = 6,
+                       hjust = -0.2,
+                       vjust = -0.5) +
     ggplot2::theme_minimal(base_size = 20) +
     ggplot2::theme(
         axis.text.x = ggplot2::element_text(size = 20),
         axis.text.y = ggplot2::element_text(size = 20)
-        )
+    )
 ```
 
 
